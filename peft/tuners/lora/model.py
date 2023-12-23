@@ -192,7 +192,7 @@ class LoraModel(BaseTuner):
         else:
             if target_name == "q" or target_name == "v":
                 new_module = self._create_new_module(lora_config, adapter_name, target, **kwargs)
-            elif target_name == "k" and re.fullmatch(r"encoder\..*?\.k", target_name_key) is not None:
+            else:
                 new_module = nn.Sequential(
                     nn.TransformerEncoder(
                         nn.TransformerEncoderLayer(
@@ -203,8 +203,6 @@ class LoraModel(BaseTuner):
                     ),
                     nn.Linear(target.in_features, target.out_features, bias=bias),
                 )
-            else:
-                new_module = self._create_new_module(lora_config, adapter_name, target, **kwargs)
             if adapter_name != self.active_adapter:
                 # adding an additional adapter: it is not automatically trainable
                 new_module.requires_grad_(False)

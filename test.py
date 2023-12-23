@@ -31,14 +31,11 @@ peft_config = LoraConfig(
                 r=8,
                 lora_alpha=32,
                 lora_dropout=0.1,
-                target_modules=["q", "k", "v"],
+                target_modules=["q", r"encoder\..*?\.k", "v"],
             )
 
 
 model = get_peft_model(model, peft_config, "default")
-# model = LoraModel(model, peft_config, "default")
-
-# print(list(model.named_modules()))
 
 model.print_trainable_parameters()
 
