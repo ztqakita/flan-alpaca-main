@@ -16,7 +16,7 @@ from torch.distributed.fsdp import (
 )
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.utils.data import DataLoader
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, Adafactor
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, Adafactor, AutoModelForCausalLM
 from transformers.models.t5.modeling_t5 import T5Block
 
 from data_loading import TextToTextDataset
