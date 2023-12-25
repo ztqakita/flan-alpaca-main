@@ -6,7 +6,7 @@ model_name = "google/t5-v1_1-small"
 
 
 bnb_config = BitsAndBytesConfig(
-    load_in_4bit=True,
+    load_in_4bit=False,
     bnb_4bit_quant_type="nf4",
     bnb_4bit_compute_dtype=torch.float16,
 )
@@ -37,7 +37,7 @@ peft_config = LoraConfig(
 
 model = get_peft_model(model, peft_config, "default")
 
-model.print_trainable_parameters()
+# model.print_trainable_parameters()
 
 # Printing trainable parameters
 for name, param in model.named_parameters():

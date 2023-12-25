@@ -21,9 +21,13 @@ from transformers.models.t5.modeling_t5 import T5Block
 
 from data_loading import TextToTextDataset
 
+from logitorch.data_collators.proofwriter_collator import ProofWriterQACollator, ProofWriterProofGenerationAllCollator
+from logitorch.datasets.proof_qa.proofwriter_dataset import ProofWriterDataset
+
+
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
-
+# For multi-gpu training, shards the model across gpus
 class MyFSDPStrategy(FSDPStrategy):
     @staticmethod
     def clean_up_state_names(state: dict, prefix="_forward_module.") -> dict:
@@ -72,10 +76,10 @@ class MyFSDPStrategy(FSDPStrategy):
 def init_args(raw_args):
     # Training args should follow FlanT5 (Scaling Instruction-Finetuned Language Models)
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name_or_path", type=str, default="google/flan-t5-base")
+    parser.add_argument("--model_name_or_path", type=str, default="google/flan-t5-large")
     parser.add_argument("--max_source_length", type=int, default=40)
     parser.add_argument("--max_target_length", type=int, default=160)
-    parser.add_argument("--data_path", type=str, default="data/train.json")
+    # parser.add_argument("--data_path", type=str, default="data/train.json")
     parser.add_argument("--train_epochs", type=int, default=3)
     parser.add_argument("--train_batch_size", type=int, default=64)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
@@ -87,6 +91,7 @@ def init_args(raw_args):
     parser.add_argument("--use_gradient_checkpointing", action="store_true")
     parser.add_argument("--use_fsdp", action="store_true")
     parser.add_argument("--use_lora", action="store_true")
+    parser.add_argument("--device", type=str, default="gpu")
     parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args(raw_args)
@@ -108,8 +113,8 @@ class LightningModel(pl.LightningModule):
                 task_type=TaskType.SEQ_2_SEQ_LM,
                 inference_mode=False,
                 r=8,
-                lora_alpha=32,
-                lora_dropout=0.1,
+                lora_alpha=8,  # charlie: changed from 32 to 8
+                # lora_dropout=0.1,  # charlie: changed from 0.1 to 0.0
             )
             self.model = get_peft_model(self.model, peft_config)
         if self.hparams.use_compile:
@@ -135,14 +140,16 @@ class LightningModel(pl.LightningModule):
         )
 
     def _step(self, batch):
-        lm_labels = batch["target_ids"]
+        # lm_labels = batch["target_ids"]
+        lm_labels = batch[1]
         lm_labels[lm_labels[:, :] == self.tokenizer.pad_token_id] = -100
+        input_ids = batch[0]['input_ids']
+        attention_mask = batch[0]['attention_mask']
 
         outputs = self(
-            input_ids=batch["source_ids"],
-            attention_mask=batch["source_mask"],
+            input_ids=input_ids,
+            attention_mask=attention_mask,
             labels=lm_labels,
-            decoder_attention_mask=batch["target_mask"],
         )
 
         loss = outputs[0]
@@ -176,19 +183,32 @@ class LightningModel(pl.LightningModule):
         return [optimizer]
 
     def train_dataloader(self):
-        dataset = TextToTextDataset(
-            path=self.hparams.data_path,
-            max_source_length=self.hparams.max_source_length,
-            max_target_length=self.hparams.max_target_length,
-            tokenizer=self.tokenizer,
-        )
+        # dataset = TextToTextDataset(
+        #     path=self.hparams.data_path,
+        #     max_source_length=self.hparams.max_source_length,
+        #     max_target_length=self.hparams.max_target_length,
+        #     tokenizer=self.tokenizer,
+        # )
 
-        return DataLoader(
-            dataset,
-            batch_size=self.hparams.train_batch_size,
-            drop_last=True,
-            shuffle=True,
+        # use proofwriter dataset
+        train_dataset = ProofWriterDataset(
+            dataset_name="depth-5", split_set="train", task="proof_generation_all", open_world_assumption=True
         )
+        proofwriter_collate_fn = ProofWriterProofGenerationAllCollator(pretrained_t5_tokenizer=self.hparams.model_name_or_path)
+        train_dataloader = DataLoader(
+            train_dataset, batch_size=self.hparams.train_batch_size, collate_fn=proofwriter_collate_fn, drop_last=True, shuffle=True,
+        )
+        return train_dataloader
+    
+    def val_dataloader(self):
+        val_dataset = ProofWriterDataset(
+            dataset_name="depth-5", split_set="val", task="proof_generation_all", open_world_assumption=True
+        )
+        proofwriter_collate_fn = ProofWriterProofGenerationAllCollator(pretrained_t5_tokenizer=self.hparams.model_name_or_path)
+        val_dataloader = DataLoader(
+            val_dataset, batch_size=self.hparams.train_batch_size, collate_fn=proofwriter_collate_fn, drop_last=True, shuffle=True,
+        )
+        return val_dataloader
 
 
 def main(raw_args=None):
@@ -222,8 +242,9 @@ def main(raw_args=None):
         )
 
     trainer = pl.Trainer(
-        precision="bf16-mixed",
-        accelerator="gpu",
+        # precision="bf16-mixed",
+        precision=32,  # use full precision
+        accelerator=args.device,
         strategy=strategy,
         accumulate_grad_batches=1 if args.debug else args.gradient_accumulation_steps,
         default_root_dir=args.output_dir,
@@ -238,58 +259,26 @@ def main(raw_args=None):
 
 
 """
-p training.py --output_dir outputs/model/base
-
-p training.py --output_dir outputs/model/xl \
---use_compile \
---model_name_or_path "google/flan-t5-xl" \
---train_batch_size 1 \
---gradient_accumulation_steps 64
-
-python training.py --output_dir outputs/model/xxl \
---use_fsdp \
---model_name_or_path "google/flan-t5-xxl" \
---train_batch_size 1 \
---gradient_accumulation_steps 64
-
-p training.py --output_dir outputs/model_gpt4all/xl \
---max_source_length 256 \
---max_target_length 256 \
---data_path data/train_gpt4all.json \
---train_epochs 1 \
---use_compile \
---model_name_or_path "google/flan-t5-xl" \
---train_batch_size 1 \
---gradient_accumulation_steps 64
-
-p training.py --output_dir outputs/model_gpt4all_lora/xl \
+Default server lora training command:
+python training.py --output_dir outputs/lora_test_run \
 --use_lora \
---learning_rate 1e-3 \
---max_source_length 256 \
---max_target_length 256 \
---data_path data/train_gpt4all.json \
---use_compile \
---model_name_or_path "google/flan-t5-xl" \
---train_batch_size 8 \
---gradient_accumulation_steps 8
-
-p training.py --output_dir outputs/model_sharegpt/xl \
---data_path data/train_sharegpt.json \
 --max_source_length 512 \
 --max_target_length 512 \
---use_compile \
---model_name_or_path "google/flan-t5-xl" \
---train_batch_size 1 \
---gradient_accumulation_steps 64
+--train_batch_size 32 \
+--gradient_accumulation_steps 1 \
 
-p training.py --output_dir outputs/model/xl \
---data_path data/train.json \
---max_source_length 64 \
---max_target_length 512 \
---use_compile \
---model_name_or_path "google/flan-t5-xl" \
---train_batch_size 1 \
---gradient_accumulation_steps 64
+
+Local run lora training command:
+python training.py --output_dir outputs/lora_test_run \
+--use_lora \
+--device cpu \
+--max_source_length 256 \
+--max_target_length 256 \
+--train_batch_size 2 \
+--gradient_accumulation_steps 2 \
+--model_name_or_path google/flan-t5-small \
+--debug
+
 
 """
 

@@ -1,6 +1,6 @@
 from torch.utils.data.dataloader import DataLoader
 
-from logitorch.data_collators.proofwriter_collator import ProofWriterQACollator
+from logitorch.data_collators.proofwriter_collator import ProofWriterQACollator, ProofWriterProofGenerationAllCollator
 from logitorch.datasets.proof_qa.proofwriter_dataset import ProofWriterDataset
 
 # ==================== ProofWriter MetaInfo====================
@@ -30,11 +30,29 @@ from logitorch.datasets.proof_qa.proofwriter_dataset import ProofWriterDataset
 train_dataset = ProofWriterDataset(dataset_name="depth-5", split_set="train", task="proof_generation_all", open_world_assumption=True)
 val_dataset = ProofWriterDataset(dataset_name="depth-5", split_set="val", task="proof_generation_all", open_world_assumption=True)
 
+print("======== QA Dataset ==========")
 proofwriter_collate_fn = ProofWriterQACollator(pretrained_t5_tokenizer="google/t5-v1_1-small")
 
 train_dataloader = DataLoader(
-    train_dataset, batch_size=32, collate_fn=proofwriter_collate_fn
+    train_dataset, batch_size=2, collate_fn=proofwriter_collate_fn
 )
 val_dataloader = DataLoader(
-    val_dataset, batch_size=32, collate_fn=proofwriter_collate_fn
+    val_dataset, batch_size=2, collate_fn=proofwriter_collate_fn
 )
+
+for batch in train_dataloader:
+    print(batch)
+    break
+
+print("======== Proof Generation Dataset ==========")
+proofwriter_collate_fn = ProofWriterProofGenerationAllCollator(pretrained_t5_tokenizer="google/t5-v1_1-small")
+train_dataloader = DataLoader(
+    train_dataset, batch_size=10, collate_fn=proofwriter_collate_fn
+)
+val_dataloader = DataLoader(
+    val_dataset, batch_size=10, collate_fn=proofwriter_collate_fn
+)
+
+for batch in train_dataloader:
+    print(batch)
+    break
