@@ -104,7 +104,7 @@ class LightningModel(pl.LightningModule):
         self.save_hyperparameters(hparams)
         print(self.hparams)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(
-            self.hparams.model_name_or_path
+            self.hparams.model_name_or_path, local_files_only=True
         )
         print(dict(orig_state_dict=len(self.model.state_dict())))
         if self.hparams.use_lora:
@@ -121,7 +121,7 @@ class LightningModel(pl.LightningModule):
             self.model = torch.compile(self.model)
         if self.hparams.use_gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
-        self.tokenizer = AutoTokenizer.from_pretrained(self.hparams.model_name_or_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.hparams.model_name_or_path, local_files_only=True)
 
     def forward(
         self,
