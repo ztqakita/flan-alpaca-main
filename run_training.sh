@@ -1,4 +1,6 @@
 #!/bin/bash
+export CUDA_HOME=/usr/local/cuda-11.8
+
 python training.py --output_dir outputs/lora_test_run \
 --use_lora \
 --device gpu \
