@@ -40,6 +40,7 @@ from .config import LoraConfig
 from .gptq import QuantLinear
 from .layer import Conv2d, Embedding, Linear, LoraLayer
 
+from Transformer_encoder import SharedWeightTransformer
 
 if is_bnb_available():
     import bitsandbytes as bnb
@@ -193,16 +194,17 @@ class LoraModel(BaseTuner):
             if target_name == "q" or target_name == "v":
                 new_module = self._create_new_module(lora_config, adapter_name, target, **kwargs)
             else:
-                new_module = nn.Sequential(
-                    nn.TransformerEncoder(
-                        nn.TransformerEncoderLayer(
-                            d_model=target.in_features,
-                            nhead=8,
-                        ),
-                        num_layers=6,
-                    ),
-                    nn.Linear(target.in_features, target.out_features, bias=bias),
-                )
+                new_module = SharedWeightTransformer()
+                # new_module = nn.Sequential(
+                #     nn.TransformerEncoder(
+                #         nn.TransformerEncoderLayer(
+                #             d_model=target.in_features,
+                #             nhead=8,
+                #         ),
+                #         num_layers=6,
+                #     ),
+                #     nn.Linear(target.in_features, target.out_features, bias=bias),
+                # )
             if adapter_name != self.active_adapter:
                 # adding an additional adapter: it is not automatically trainable
                 new_module.requires_grad_(False)
@@ -237,7 +239,8 @@ class LoraModel(BaseTuner):
         for name, module in new_module.named_modules():
             if "lora_" in name:
                 module.to(child.weight.device)
-            if "encoder" in name and "k" in name:
+            if re.fullmatch(r".*?encoder\..*?\.k.*?", name) is not None and \
+                re.fullmatch(r".*?encoder\..*?\.k.weight", name) is None:
                 module.to(child.weight.device)
             if "ranknum" in name:
                 module.to(child.weight.device)
@@ -247,7 +250,7 @@ class LoraModel(BaseTuner):
             if "lora_" not in n:
                 p.requires_grad = False
 
-            if "encoder" in n and "k" in n:
+            if re.fullmatch(r".*?encoder\..*?\.k.*?", n) is not None and re.fullmatch(r".*?encoder\..*?\.k.weight", n) is None:
                 p.requires_grad = True
 
         for active_adapter in self.active_adapters:
