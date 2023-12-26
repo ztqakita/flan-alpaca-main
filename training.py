@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, Adafactor, AutoModelForCausalLM
 from transformers.models.t5.modeling_t5 import T5Block
 
-from data_loading import TextToTextDataset
+# from data_loading import TextToTextDataset
 
 from logitorch.data_collators.proofwriter_collator import ProofWriterQACollator, ProofWriterProofGenerationAllCollator
 from logitorch.datasets.proof_qa.proofwriter_dataset import ProofWriterDataset
@@ -82,6 +82,7 @@ def init_args(raw_args):
     # parser.add_argument("--data_path", type=str, default="data/train.json")
     parser.add_argument("--train_epochs", type=int, default=3)
     parser.add_argument("--train_batch_size", type=int, default=64)
+    parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--learning_rate", type=float, default=5e-4)
     parser.add_argument("--seed", type=int, default=42)
@@ -115,8 +116,10 @@ class LightningModel(pl.LightningModule):
                 r=8,
                 lora_alpha=8,  # charlie: changed from 32 to 8
                 # lora_dropout=0.1,  # charlie: changed from 0.1 to 0.0
+                target_modules=["q", r"encoder\..*?\.k", "v"],
             )
             self.model = get_peft_model(self.model, peft_config)
+            print(" ===== Lora model created. =====")
         if self.hparams.use_compile:
             self.model = torch.compile(self.model)
         if self.hparams.use_gradient_checkpointing:
@@ -159,6 +162,11 @@ class LightningModel(pl.LightningModule):
         loss = self._step(batch)
         self.log("loss", loss, on_step=True, prog_bar=True, rank_zero_only=True)
         return loss
+    
+    def validation_step(self, batch, batch_idx):
+        loss = self._step(batch)
+        self.log("val_loss", loss, on_step=True, prog_bar=True, rank_zero_only=True)
+        return loss
 
     def configure_optimizers(self):
         no_decay = ["bias", "LayerNorm.weight"]
@@ -183,13 +191,6 @@ class LightningModel(pl.LightningModule):
         return [optimizer]
 
     def train_dataloader(self):
-        # dataset = TextToTextDataset(
-        #     path=self.hparams.data_path,
-        #     max_source_length=self.hparams.max_source_length,
-        #     max_target_length=self.hparams.max_target_length,
-        #     tokenizer=self.tokenizer,
-        # )
-
         # use proofwriter dataset
         train_dataset = ProofWriterDataset(
             dataset_name="depth-5", split_set="train", task="proof_generation_all", open_world_assumption=True
@@ -197,6 +198,7 @@ class LightningModel(pl.LightningModule):
         proofwriter_collate_fn = ProofWriterProofGenerationAllCollator(pretrained_t5_tokenizer=self.hparams.model_name_or_path)
         train_dataloader = DataLoader(
             train_dataset, batch_size=self.hparams.train_batch_size, collate_fn=proofwriter_collate_fn, drop_last=True, shuffle=True,
+            num_workers=self.hparams.num_workers,
         )
         return train_dataloader
     
@@ -206,7 +208,8 @@ class LightningModel(pl.LightningModule):
         )
         proofwriter_collate_fn = ProofWriterProofGenerationAllCollator(pretrained_t5_tokenizer=self.hparams.model_name_or_path)
         val_dataloader = DataLoader(
-            val_dataset, batch_size=self.hparams.train_batch_size, collate_fn=proofwriter_collate_fn, drop_last=True, shuffle=True,
+            val_dataset, batch_size=self.hparams.train_batch_size, collate_fn=proofwriter_collate_fn, drop_last=True, shuffle=False,
+            num_workers=self.hparams.num_workers,
         )
         return val_dataloader
 
@@ -233,9 +236,9 @@ def main(raw_args=None):
                 transformer_layer_cls={T5Block},
             ),
             mixed_precision=MixedPrecision(
-                param_dtype=torch.bfloat16,
-                reduce_dtype=torch.bfloat16,
-                buffer_dtype=torch.bfloat16,
+                param_dtype=torch.float16,
+                reduce_dtype=torch.float16,
+                buffer_dtype=torch.float16,
             ),
             activation_checkpointing=T5Block,
             cpu_offload=True,
@@ -243,8 +246,9 @@ def main(raw_args=None):
 
     trainer = pl.Trainer(
         # precision="bf16-mixed",
-        precision=32,  # use full precision
+        precision='16-mixed',
         accelerator=args.device,
+        devices=2,
         strategy=strategy,
         accumulate_grad_batches=1 if args.debug else args.gradient_accumulation_steps,
         default_root_dir=args.output_dir,
