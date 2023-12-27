@@ -14,6 +14,8 @@ from torch.distributed.fsdp import (
     StateDictType,
     FullStateDictConfig,
 )
+from lr_scheduler import WarmupDecayLR
+
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, Adafactor, AutoModelForCausalLM
@@ -23,6 +25,7 @@ from transformers.models.t5.modeling_t5 import T5Block
 
 from logitorch.data_collators.proofwriter_collator import ProofWriterQACollator, ProofWriterProofGenerationAllCollator
 from logitorch.datasets.proof_qa.proofwriter_dataset import ProofWriterDataset
+from Transformer_encoder import SharedWeightTransformer
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
@@ -117,6 +120,7 @@ class LightningModel(pl.LightningModule):
                 lora_alpha=8,  # charlie: changed from 32 to 8
                 # lora_dropout=0.1,  # charlie: changed from 0.1 to 0.0
                 target_modules=["q", r"encoder\..*?\.k", "v"],
+                # target_modules=["q", "v"],
             )
             self.model = get_peft_model(self.model, peft_config)
             print(" ===== Lora model created. =====")
@@ -188,7 +192,17 @@ class LightningModel(pl.LightningModule):
             lr=self.hparams.learning_rate,
             relative_step=False,
         )
-        return [optimizer]
+
+        scheduler = WarmupDecayLR(
+            optimizer,
+            T_0=1,
+            T_decay=3,
+            lr_0=1e-5,
+            lr_max=self.hparams.learning_rate,
+            alpha=0.1,
+        )
+        
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
     def train_dataloader(self):
         # use proofwriter dataset
@@ -233,12 +247,12 @@ def main(raw_args=None):
         strategy = MyFSDPStrategy(
             auto_wrap_policy=functools.partial(
                 transformer_auto_wrap_policy,
-                transformer_layer_cls={T5Block},
+                transformer_layer_cls={T5Block, SharedWeightTransformer},
             ),
             mixed_precision=MixedPrecision(
-                param_dtype=torch.float16,
-                reduce_dtype=torch.float16,
-                buffer_dtype=torch.float16,
+                param_dtype=torch.float32,
+                reduce_dtype=torch.float32,
+                buffer_dtype=torch.float32,
             ),
             activation_checkpointing=T5Block,
             cpu_offload=True,
@@ -246,13 +260,14 @@ def main(raw_args=None):
 
     trainer = pl.Trainer(
         # precision="bf16-mixed",
-        precision='16-mixed',
+        precision='32',
         accelerator=args.device,
-        devices=2,
+        # devices=2,
         strategy=strategy,
         accumulate_grad_batches=1 if args.debug else args.gradient_accumulation_steps,
         default_root_dir=args.output_dir,
-        gradient_clip_val=None if args.use_fsdp else 1.0,
+        # gradient_clip_val=None if args.use_fsdp else 1.0,
+        gradient_clip_val=1.0,
         max_epochs=args.train_epochs,
         callbacks=[saver],
         logger=False,

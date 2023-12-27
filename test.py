@@ -2,7 +2,7 @@ import torch
 from peft import LoraConfig, TaskType, get_peft_model, LoraModel
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, BitsAndBytesConfig, AutoTokenizer
 
-model_name = "google/t5-v1_1-small"
+model_name = "google/flan-t5-large"
 
 
 bnb_config = BitsAndBytesConfig(
@@ -43,6 +43,6 @@ print(list(model.named_modules()))
 model.print_trainable_parameters()
 
 # Printing trainable parameters
-for name, param in model.named_parameters():
-    if param.requires_grad:
-        print(name, param.size())
+# for name, param in model.named_parameters():
+#     if param.requires_grad:
+#         print(name, param.size())

@@ -2,50 +2,55 @@ import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
+T5_SMALL_DIM = 512
+T5_LARGE_DIM = 1024
+
 
 class SharedWeightTransformer(nn.Module):
+  MODEL_DIM = T5_LARGE_DIM
+
   transformer_encoder = nn.Sequential(
     nn.TransformerEncoder(
       nn.TransformerEncoderLayer(
-        d_model=512,
-        dim_feedforward=1024,
-        nhead=8,
+        d_model=MODEL_DIM,
+        dim_feedforward=MODEL_DIM * 2,
+        nhead=1,
       ),
       num_layers=1,
     ),
-    nn.Linear(512, 256),
+    nn.Linear(MODEL_DIM, MODEL_DIM // 2),
     nn.TransformerEncoder(
       nn.TransformerEncoderLayer(
-        d_model=256,
-        dim_feedforward=1024,
-        nhead=8,
+        d_model=MODEL_DIM // 2,
+        dim_feedforward=MODEL_DIM,
+        nhead=1,
       ),
       num_layers=1,
     ),
-    nn.Linear(256, 128),
+    nn.Linear(MODEL_DIM // 2, MODEL_DIM // 4),
     nn.TransformerEncoder(
       nn.TransformerEncoderLayer(
-        d_model=128,
-        dim_feedforward=1024,
-        nhead=8,
+        d_model=MODEL_DIM // 4,
+        dim_feedforward=MODEL_DIM // 2,
+        nhead=1,
       ),
       num_layers=1,
     ),
-    nn.Linear(125, 256),
+    nn.Linear(MODEL_DIM // 4, MODEL_DIM // 2),
     nn.TransformerEncoder(
       nn.TransformerEncoderLayer(
-        d_model=256,
-        dim_feedforward=1024,
-        nhead=8,
+        d_model=MODEL_DIM // 2,
+        dim_feedforward=MODEL_DIM,
+        nhead=1,
       ),
       num_layers=1,
     ),
-    nn.Linear(256, 384),
+    nn.Linear(MODEL_DIM // 2, MODEL_DIM),
     nn.TransformerEncoder(
       nn.TransformerEncoderLayer(
-        d_model=384,
-        dim_feedforward=1024,
-        nhead=8,
+        d_model=MODEL_DIM,
+        dim_feedforward=MODEL_DIM * 2,
+        nhead=1,
       ),
       num_layers=1,
     ),
